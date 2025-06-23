@@ -3,15 +3,15 @@ import time
 import logging
 import uuid
 from datetime import datetime, timedelta
+from typing import Optional
 
 # Importaciones de configuración
-from app.config.settings import get_jetson_settings # Asegúrate de que esta función exista
 from app.config.edge_database import create_edge_tables, initialize_jetson_config, get_edge_db
 
 # Importaciones de módulos de la Jetson App
 from app.data_ingestion.video_capture import VideoCapture
 from app.data_ingestion.qr_scanner import scan_qr_code, process_qr_data
-# from jetson_app.data_ingestion.ai_inference import AIInference # Se integrará después
+# from app.data_ingestion.ai_inference import AIInference # Se integrará después
 from app.identification.driver_identity import identify_and_manage_session, check_active_driver_session_status
 from app.monitoring.device_telemetry import gather_system_metrics
 from app.sync.cloud_sync import send_events_to_cloud, send_telemetry_to_cloud, pull_bus_data_by_placa, pull_assigned_drivers_for_bus
@@ -48,12 +48,13 @@ def run_jetson_provisioning():
     Función para el aprovisionamiento inicial de la Jetson Nano.
     Pide la placa del bus, descarga datos de la nube y los guarda localmente.
     """
+    global jetson_hardware_id, current_bus_id  # MOVER AL INICIO
+    
     db = next(get_edge_db())
     try:
         # Verificar si la Jetson ya está aprovisionada
         config = initialize_jetson_config(db, id_hardware_jetson="TEMPORAL_JETSON_ID", id_bus_asignado=None)
         if config.id_bus_asignado and config.id_hardware_jetson != "TEMPORAL_JETSON_ID":
-            global jetson_hardware_id, current_bus_id
             jetson_hardware_id = config.id_hardware_jetson
             current_bus_id = config.id_bus_asignado
             logger.info(f"Jetson ya aprovisionada con ID: {jetson_hardware_id} y Bus: {current_bus_id}.")
@@ -78,7 +79,7 @@ def run_jetson_provisioning():
             return False
 
         # 2. Obtener conductores asignados a ese bus desde la nube
-        drivers_from_cloud: List[ConductorLocal] = pull_assigned_drivers_for_bus(db, bus_data_from_cloud.id)
+        drivers_from_cloud = pull_assigned_drivers_for_bus(db, bus_data_from_cloud.id)
         if not drivers_from_cloud:
             logger.warning(f"No se encontraron conductores asignados al bus '{placa_bus}' en la nube. Continúe, pero sin conductores precargados.")
             trigger_audio_alert(f"No hay conductores asignados al bus {placa_bus}.")
@@ -91,7 +92,6 @@ def run_jetson_provisioning():
         
         updated_config = initialize_jetson_config(db, new_jetson_hw_id, bus_data_from_cloud.id)
         
-        global jetson_hardware_id, current_bus_id
         jetson_hardware_id = updated_config.id_hardware_jetson
         current_bus_id = updated_config.id_bus_asignado
 
@@ -110,12 +110,11 @@ def start_jetson_services():
     """
     Función principal para inicializar todos los módulos y servicios de la Jetson.
     """
-    global camera_manager # ai_processor
+    global camera_manager, jetson_hardware_id, current_bus_id  # MOVER AL INICIO
 
     logger.info("Iniciando servicios de la Jetson Nano...")
 
     # 1. Inicializar cámara
-    # camera_settings = get_jetson_settings().camera # Si tuvieras un objeto de settings
     camera_manager = VideoCapture(camera_index=0, width=640, height=480, fps=30)
     if not camera_manager.initialize_camera():
         logger.critical("Fallo al inicializar la cámara. No se puede continuar sin video.")
@@ -137,7 +136,6 @@ def start_jetson_services():
     try:
         config = initialize_jetson_config(db, id_hardware_jetson="TEMPORAL_JETSON_ID_PLACEHOLDER") # Solo para cargar config
         if config and config.id_hardware_jetson:
-            global jetson_hardware_id, current_bus_id
             jetson_hardware_id = config.id_hardware_jetson
             current_bus_id = config.id_bus_asignado # Puede ser None si nunca se aprovisionó
             logger.info(f"Configuración cargada: HW ID={jetson_hardware_id}, Bus ID={current_bus_id}")
@@ -155,6 +153,7 @@ def run_main_loop():
     Contiene el bucle principal de ejecución para mantener los procesos activos.
     """
     global last_qr_scan_time, last_session_check_time, last_telemetry_send_time, last_cloud_sync_events_time
+    global current_bus_id, jetson_hardware_id  # AÑADIR ESTA LÍNEA
 
     logger.info("Iniciando bucle principal de la Jetson Nano...")
     
@@ -189,15 +188,6 @@ def run_main_loop():
                     identify_and_manage_session(conductor_cedula)
                 else:
                     logger.debug("No se detectó QR.")
-                
-                # Después de un posible escaneo QR, verificar si hay un conductor activo en el bus actual
-                # y si no hay, disparar alerta de "Conductor No Identificado" si el bus está en operación.
-                # Esta lógica ya está parcialmente en driver_identity.identify_and_manage_session si el QR es desconocido.
-                # Para un monitoreo continuo de "conductor ausente":
-                # active_assignment = get_active_asignacion_for_bus(db, current_bus_id)
-                # if not active_assignment:
-                #     # _record_unidentified_driver_event(db, current_bus_id, "NO_QR", datetime.utcnow()) # Llamar si no hay conductor y bus está en operación
-                #     pass # La Jetson ya lo hace en driver_identity.py si no hay QR
 
             # --- 2. Inferencia de IA (PENDIENTE) ---
             # if ai_processor:
@@ -205,10 +195,6 @@ def run_main_loop():
             #     if ai_results['inference_status'] == 'Success':
             #         # Aquí se usarían los resultados de la IA para crear eventos locales (distracción, fatiga)
             #         # y luego se dispararían alertas locales si cumplen umbrales.
-            #         # create_local_event(db, {
-            #         #    'tipo_evento': 'Distraccion', 'subtipo_evento': 'Mirada',
-            #         #    'confidence_score_ia': ai_results['distraction_score'], ...
-            #         # })
             #         pass
             # else:
             #     logger.debug("Modelos de IA no cargados o no disponibles. Saltando inferencia.")
@@ -235,13 +221,6 @@ def run_main_loop():
                 logger.debug("Iniciando sincronización de eventos pendientes con la nube...")
                 # send_events_to_cloud marcará los eventos como sincronizados
                 send_events_to_cloud(db)
-                
-                # También, asegurarse de que el estado actual de la sesión se envíe periódicamente
-                # Esto es para asegurar que la nube tenga el estado más reciente de la sesión activa
-                # aunque los cambios de estado (inicio/fin) ya se envían al momento.
-                # active_assignment = get_active_asignacion_for_bus(db, current_bus_id)
-                # if active_assignment:
-                #    send_session_data_to_cloud(db, active_assignment)
 
             # Pequeña pausa para no saturar la CPU y permitir otros procesos
             time.sleep(0.01) # 10ms de pausa
@@ -260,8 +239,6 @@ def main():
     logger.info("Iniciando aplicación Jetson Nano.")
 
     # 1. Ejecutar el aprovisionamiento si es necesario
-    # Comentado por ahora si prefieres ejecutarlo manualmente o en otro script
-    # Si la Jetson no está configurada, el bucle principal no operará completamente.
     if not run_jetson_provisioning():
         logger.critical("Aprovisionamiento fallido. Saliendo de la aplicación.")
         return

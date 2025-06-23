@@ -151,6 +151,11 @@ class EventoLocal(Base):
     synced_to_cloud = Column(Boolean, default=False, nullable=False) 
     sent_to_cloud_at = Column(DateTime) 
 
+    #evento multimedia
+    snapshot_local_path = Column(String)  # Ruta local del snapshot
+    video_clip_local_path = Column(String)  # Ruta local del video
+    archivos_synced = Column(Boolean, default=False)
+
     # Relaciones locales
     bus = relationship("BusLocal", backref="eventos_local")
     conductor = relationship("ConductorLocal", backref="eventos_local")

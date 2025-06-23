@@ -2,21 +2,24 @@ import logging
 import requests
 import json
 import uuid 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy.orm import Session 
 
 # Importaciones de módulos locales para obtener datos de la BD y configuración
-from config.edge_database import get_edge_db 
+from app.config.edge_database import get_edge_db 
 from app.local_db.crud_edge import (
     get_unsynced_events,
     mark_event_as_synced,
     create_or_update_sync_metadata,
     get_sync_metadata,
     get_jetson_config_local,
-    create_or_update_conductor_local, 
-    create_or_update_bus_local 
+    create_or_update_conductor_local_selective,  # ACTUALIZADO
+    create_or_update_bus_local,
+    # NUEVAS FUNCIONES MULTIMEDIA
+    get_events_with_unsynced_files,
+    mark_event_files_as_synced
 )
 from app.models.edge_database_models import (
     EventoLocal, 
@@ -24,7 +27,7 @@ from app.models.edge_database_models import (
     ConductorLocal, 
     BusLocal, 
     ConfiguracionJetsonLocal,
-    AsignacionConductorBusLocal # Necesitamos este modelo para enviar sus datos como 'SesionConduccion'
+    AsignacionConductorBusLocal
 )
 
 # Configuración del logger
@@ -36,23 +39,21 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-# --- Configuración del API Central (¡AJUSTAR ESTO A TU API REAL!) ---
-# Estas URL base DEBEN coincidir con los endpoints que definirás en tu backend de la nube.
-CLOUD_API_BASE_URL = "http://localhost:8000/api/v1" 
-                                                  
+# --- Configuración del API Central ---
+CLOUD_API_BASE_URL = "http://localhost:8000/api/v1"
+
 # Endpoints específicos
 CLOUD_API_EVENTS_ENDPOINT = f"{CLOUD_API_BASE_URL}/events"
 CLOUD_API_TELEMETRY_ENDPOINT = f"{CLOUD_API_BASE_URL}/jetson_telemetry"
-# Endpoint para recibir los datos de SesionConduccion (que vienen de AsignacionConductorBusLocal)
-CLOUD_API_SESION_CONDUCCION_ENDPOINT = f"{CLOUD_API_BASE_URL}/sesiones_conduccion" # <<<<<<< NUEVO ENDPOINT
+CLOUD_API_SESION_CONDUCCION_ENDPOINT = f"{CLOUD_API_BASE_URL}/sesiones_conduccion"
 
 # Endpoints para el aprovisionamiento (pull)
-CLOUD_API_GET_BUS_BY_PLACA = f"{CLOUD_API_BASE_URL}/buses/by_placa" 
-CLOUD_API_GET_DRIVERS_BY_BUS_ID = f"{CLOUD_API_BASE_URL}/buses" 
+CLOUD_API_GET_BUS_BY_PLACA = f"{CLOUD_API_BASE_URL}/buses/by_placa"
+CLOUD_API_GET_DRIVERS_BY_BUS_ID = f"{CLOUD_API_BASE_URL}/buses"
+CLOUD_API_GET_CONDUCTOR_BY_ID = f"{CLOUD_API_BASE_URL}/conductores"  # NUEVO
 
-# --- Autenticación (Simple por ahora, mejorar para producción) ---
-AUTH_TOKEN = "your_secret_auth_token" 
-
+# --- Autenticación ---
+AUTH_TOKEN = "your_secret_auth_token"
 
 def _get_auth_headers() -> Dict[str, str]:
     """Retorna los headers de autenticación para las peticiones a la API."""
@@ -62,14 +63,7 @@ def _get_auth_headers() -> Dict[str, str]:
 def send_events_to_cloud(db: Session, batch_size: int = 50) -> bool:
     """
     Envía eventos pendientes de sincronización desde la BD local a la API central.
-    Procesa los eventos en lotes.
-
-    Args:
-        db (Session): Sesión de la base de datos local.
-        batch_size (int): Número de eventos a procesar por lote.
-
-    Returns:
-        bool: True si la sincronización del lote fue exitosa, False en caso contrario.
+    ACTUALIZADO: Incluye rutas de archivos multimedia.
     """
     logger.info("Iniciando sincronización de eventos pendientes con la nube...")
     unsynced_events: List[EventoLocal] = get_unsynced_events(db, limit=batch_size)
@@ -84,7 +78,7 @@ def send_events_to_cloud(db: Session, batch_size: int = 50) -> bool:
             "id": str(event.id),
             "id_bus": str(event.id_bus),
             "id_conductor": str(event.id_conductor),
-            "id_sesion_conduccion_jetson": str(event.id_sesion_conduccion) if event.id_sesion_conduccion else None, # <<<<< CAMBIO: Renombrado para la nube
+            "id_sesion_conduccion_jetson": str(event.id_sesion_conduccion) if event.id_sesion_conduccion else None,
             "timestamp_evento": event.timestamp_evento.isoformat(),
             "tipo_evento": event.tipo_evento,
             "subtipo_evento": event.subtipo_evento,
@@ -94,6 +88,10 @@ def send_events_to_cloud(db: Session, batch_size: int = 50) -> bool:
             "alerta_disparada": event.alerta_disparada,
             "ubicacion_gps_evento": event.ubicacion_gps_evento,
             "metadatos_ia_json": event.metadatos_ia_json,
+            # NUEVOS CAMPOS MULTIMEDIA (solo rutas locales para referencia)
+            "has_snapshot": bool(event.snapshot_local_path),
+            "has_video": bool(event.video_clip_local_path),
+            "archivos_synced": event.archivos_synced
         }
         events_to_send.append(event_dict)
 
@@ -127,7 +125,9 @@ def send_events_to_cloud(db: Session, batch_size: int = 50) -> bool:
         return False
 
 def send_telemetry_to_cloud(db: Session, metrics: Dict[str, Any]) -> bool:
-    # ... (código existente para send_telemetry_to_cloud) ...
+    """
+    Envía datos de telemetría a la nube.
+    """
     logger.info("Intentando enviar telemetría a la nube...")
 
     jetson_config = get_jetson_config_local(db)
@@ -166,26 +166,23 @@ def send_telemetry_to_cloud(db: Session, metrics: Dict[str, Any]) -> bool:
 
 def send_session_data_to_cloud(db: Session, session_obj: AsignacionConductorBusLocal) -> bool:
     """
-    Envía los datos de una sesión de conducción (AsignacionConductorBusLocal) a la API central
-    para ser registrados como SesionConduccion en la nube.
-    Esto se llamará al iniciar y finalizar una sesión en la Jetson.
+    Envía los datos de una sesión de conducción a la API central.
     """
     logger.info(f"Intentando enviar datos de sesión {session_obj.id_sesion_conduccion} a la nube...")
     
     session_data = {
-        "id_sesion_conduccion_jetson": str(session_obj.id_sesion_conduccion), # Este es el ID global de la sesión
+        "id_sesion_conduccion_jetson": str(session_obj.id_sesion_conduccion),
         "id_conductor": str(session_obj.id_conductor),
         "id_bus": str(session_obj.id_bus),
         "fecha_inicio_real": session_obj.fecha_inicio_asignacion.isoformat(),
         "fecha_fin_real": session_obj.fecha_fin_asignacion.isoformat() if session_obj.fecha_fin_asignacion else None,
-        "estado_sesion": session_obj.estado_turno, # 'estado_turno' en Edge mapea a 'estado_sesion' en Nube
+        "estado_sesion": session_obj.estado_turno,
         "duracion_total_seg": float(session_obj.tiempo_conduccion_acumulado_seg) if session_obj.tiempo_conduccion_acumulado_seg is not None else None,
-        # Podrías añadir más campos si los necesitas en la nube desde la sesión local
     }
 
     try:
         response = requests.post(
-            CLOUD_API_SESION_CONDUCCION_ENDPOINT, # Endpoint para SesionesConduccion
+            CLOUD_API_SESION_CONDUCCION_ENDPOINT,
             json=session_data,
             headers=_get_auth_headers(),
             timeout=10
@@ -193,8 +190,6 @@ def send_session_data_to_cloud(db: Session, session_obj: AsignacionConductorBusL
         response.raise_for_status()
 
         logger.info(f"Datos de sesión {session_obj.id_sesion_conduccion} enviados con éxito a la nube.")
-        # Opcional: Marcar la sesión local como sincronizada si es necesario.
-        # Por ahora, asumimos que los eventos de la sesión son los que controlan la sincronización principal.
         return True
 
     except requests.exceptions.Timeout:
@@ -210,11 +205,12 @@ def send_session_data_to_cloud(db: Session, session_obj: AsignacionConductorBusL
         logger.error(f"Error inesperado durante el envío de datos de sesión {session_obj.id_sesion_conduccion}: {e}", exc_info=True)
         return False
 
-
 # --- Funciones de PULL para Aprovisionamiento ---
 
 def pull_bus_data_by_placa(db: Session, placa: str) -> Optional[BusLocal]:
-    # ... (código existente para pull_bus_data_by_placa) ...
+    """
+    Obtiene datos del bus desde la nube por placa.
+    """
     logger.info(f"Intentando obtener datos del bus con placa '{placa}' desde la nube...")
     try:
         response = requests.get(
@@ -226,16 +222,10 @@ def pull_bus_data_by_placa(db: Session, placa: str) -> Optional[BusLocal]:
 
         bus_data: Dict[str, Any] = response.json()
         
-        # Convertir id_empresa a UUID si viene como string
-        if 'id_empresa' in bus_data and isinstance(bus_data['id_empresa'], str): # <<<<< CAMBIO: id_empresa
-            try:
-                bus_data['id_empresa'] = uuid.UUID(bus_data['id_empresa'])
-            except ValueError:
-                logger.warning(f"ID de empresa '{bus_data['id_empresa']}' no es un UUID válido. Se usará None.")
-                bus_data['id_empresa'] = None 
-
+        # Procesar UUID
         bus_data['id'] = uuid.UUID(bus_data['id']) if isinstance(bus_data['id'], str) else bus_data['id']
         
+        # Usar la nueva función selectiva
         bus_local = create_or_update_bus_local(db, bus_data)
         logger.info(f"Datos del bus '{placa}' obtenidos y actualizados/creados localmente.")
         return bus_local
@@ -254,7 +244,9 @@ def pull_bus_data_by_placa(db: Session, placa: str) -> Optional[BusLocal]:
     return None
 
 def pull_assigned_drivers_for_bus(db: Session, bus_id: uuid.UUID) -> List[ConductorLocal]:
-    # ... (código existente para pull_assigned_drivers_for_bus) ...
+    """
+    Obtiene conductores asignados al bus desde la nube.
+    """
     logger.info(f"Intentando obtener conductores asignados al bus '{bus_id}' desde la nube...")
     conductores_sincronizados: List[ConductorLocal] = []
     try:
@@ -269,13 +261,6 @@ def pull_assigned_drivers_for_bus(db: Session, bus_id: uuid.UUID) -> List[Conduc
         
         for driver_data in drivers_data:
             driver_data['id'] = uuid.UUID(driver_data['id']) if isinstance(driver_data['id'], str) else driver_data['id']
-            # Convertir id_empresa a UUID si viene como string
-            if 'id_empresa' in driver_data and isinstance(driver_data['id_empresa'], str): # <<<<< CAMBIO: id_empresa
-                try:
-                    driver_data['id_empresa'] = uuid.UUID(driver_data['id_empresa'])
-                except ValueError:
-                    logger.warning(f"ID de empresa '{driver_data['id_empresa']}' para conductor {driver_data.get('id', 'N/A')} no es un UUID válido. Se usará None.")
-                    driver_data['id_empresa'] = None
             
             if 'caracteristicas_faciales_embedding' in driver_data and isinstance(driver_data['caracteristicas_faciales_embedding'], str):
                 try:
@@ -284,7 +269,8 @@ def pull_assigned_drivers_for_bus(db: Session, bus_id: uuid.UUID) -> List[Conduc
                     logger.warning(f"Embedding facial para conductor {driver_data.get('id', 'N/A')} no es JSON válido. Se usará None.")
                     driver_data['caracteristicas_faciales_embedding'] = None
 
-            conductor_local = create_or_update_conductor_local(db, driver_data)
+            # USAR LA NUEVA FUNCIÓN SELECTIVA (sin force_update en aprovisionamiento)
+            conductor_local = create_or_update_conductor_local_selective(db, driver_data, force_update=False)
             conductores_sincronizados.append(conductor_local)
         
         logger.info(f"Sincronizados {len(conductores_sincronizados)} conductores asignados al bus '{bus_id}' localmente.")
@@ -300,97 +286,116 @@ def pull_assigned_drivers_for_bus(db: Session, bus_id: uuid.UUID) -> List[Conduc
         logger.error(f"Error inesperado al obtener conductores para el bus '{bus_id}': {e}", exc_info=True)
     return []
 
-# --- Ejemplo de uso (este bloque se moverá a main_jetson.py o un script de provisionamiento) ---
-if __name__ == '__main__':
-    print("--- Probando cloud_sync.py Pull Functions (SIMULADO) ---")
-    print("Este script intentará conectar con un servidor API en http://localhost:8000")
-    print("Asegúrate de tener un servidor de backend corriendo con los endpoints:")
-    print(f" - GET {CLOUD_API_GET_BUS_BY_PLACA}?placa=XYZ")
-    print(f" - GET {CLOUD_API_GET_DRIVERS_BY_BUS_ID}/<UUID_BUS>/drivers")
-    print(f" - POST {CLOUD_API_SESION_CONDUCCION_ENDPOINT} (para enviar sesiones)")
-
-    from config.edge_database import EdgeSessionLocal, create_edge_tables, initialize_jetson_config, get_edge_db
-    from app.models.edge_database_models import Base, EventoLocal, ConfiguracionJetsonLocal, BusLocal, ConductorLocal, AsignacionConductorBusLocal
-    from app.local_db.crud_edge import create_or_update_conductor_local 
-
-    test_bus_id_pull = uuid.UUID("11111111-1111-1111-1111-111111111111") 
-    test_conductor_id_sync_pull = uuid.UUID("44444444-4444-4444-4444-444444444444") 
-
-    db_session_test = None
+# --- NUEVA FUNCIÓN PARA QR SCANNING ---
+def pull_conductor_by_id(conductor_uuid: uuid.UUID) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene un conductor específico desde la nube por su UUID.
+    Esta función se usa en el flujo de QR scanning.
+    
+    Args:
+        conductor_uuid: UUID del conductor
+    
+    Returns:
+        Dict con datos del conductor o None si no se encuentra
+    """
+    logger.info(f"Intentando obtener conductor {conductor_uuid} desde la nube...")
     try:
-        create_edge_tables() 
-        db_session_test = next(get_edge_db()) 
-        
-        jetson_hw_id_sync_pull = "JETSON-PULL-TEST-001"
-        initialize_jetson_config(db_session_test, jetson_hw_id_sync_pull, test_bus_id_pull)
+        response = requests.get(
+            f"{CLOUD_API_GET_CONDUCTOR_BY_ID}/{conductor_uuid}",
+            headers=_get_auth_headers(),
+            timeout=10
+        )
+        response.raise_for_status()
 
-        print("\n--- Probando pull_bus_data_by_placa ---")
-        test_placa = "BUS-NUBE-001" 
-        pulled_bus = pull_bus_data_by_placa(db_session_test, test_placa)
-        if pulled_bus:
-            print(f"Bus '{pulled_bus.placa}' (ID: {pulled_bus.id}) obtenido y guardado localmente.")
-            test_bus_id_pull = pulled_bus.id 
+        conductor_data: Dict[str, Any] = response.json()
+        
+        # Procesar datos
+        conductor_data['id'] = uuid.UUID(conductor_data['id']) if isinstance(conductor_data['id'], str) else conductor_data['id']
+        
+        if 'caracteristicas_faciales_embedding' in conductor_data and isinstance(conductor_data['caracteristicas_faciales_embedding'], str):
+            try:
+                conductor_data['caracteristicas_faciales_embedding'] = json.loads(conductor_data['caracteristicas_faciales_embedding'])
+            except json.JSONDecodeError:
+                conductor_data['caracteristicas_faciales_embedding'] = None
+
+        logger.info(f"Conductor {conductor_data.get('nombre_completo', 'N/A')} obtenido desde la nube.")
+        return conductor_data
+
+    except requests.exceptions.Timeout:
+        logger.error(f"Tiempo de espera agotado al obtener conductor {conductor_uuid}.")
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Error de conexión al obtener conductor {conductor_uuid}: {e}")
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            logger.warning(f"Conductor {conductor_uuid} no encontrado en la nube.")
         else:
-            print(f"Fallo al obtener bus con placa '{test_placa}'. Asegura que el backend está corriendo y el bus existe.")
-
-        if pulled_bus:
-            print(f"\n--- Probando pull_assigned_drivers_for_bus para bus ID: {test_bus_id_pull} ---")
-            pulled_drivers = pull_assigned_drivers_for_bus(db_session_test, test_bus_id_pull)
-            if pulled_drivers:
-                for driver in pulled_drivers:
-                    print(f"  Conductor '{driver.nombre_completo}' (Cédula: {driver.cedula}) obtenido y guardado localmente.")
-            else:
-                print(f"Fallo al obtener conductores para el bus '{test_bus_id_pull}'. Asegura que el backend tiene conductores asignados.")
-        
-        print("\n--- Sincronizando algunos eventos de prueba (PUSH) ---")
-        conductor_para_evento_push = db_session_test.query(ConductorLocal).filter_by(id=test_conductor_id_sync_pull).first()
-        if not conductor_para_evento_push:
-             conductor_para_evento_push = create_or_update_conductor_local(db_session_test, {
-                 "id": test_conductor_id_sync_pull,
-                 "cedula": "4444444444",
-                 "nombre_completo": "Conductor para Evento Push",
-                 "codigo_qr_hash": "4444444444",
-                 "activo": True,
-                 "id_empresa": uuid.UUID("00000000-0000-0000-0000-000000000001") # ID de empresa de prueba
-             })
-             print(f"Conductor de prueba para eventos push creado: {conductor_para_evento_push.nombre_completo}")
-
-        new_event = EventoLocal(
-            id_bus=test_bus_id_pull,
-            id_conductor=conductor_para_evento_push.id, 
-            id_sesion_conduccion=uuid.uuid4(),
-            timestamp_evento=datetime.utcnow(),
-            tipo_evento='TestPull', subtipo_evento='TestPull', severidad='Baja', alerta_disparada=False
-        )
-        db_session_test.add(new_event)
-        db_session_test.commit()
-        send_events_to_cloud(db_session_test)
-
-        # --- Prueba de PUSH de datos de Sesión de Conducción ---
-        print("\n--- Sincronizando datos de Sesión de Conducción (PUSH) ---")
-        # Simular una AsignacionConductorBusLocal (sesión) para enviar
-        test_session_id = uuid.uuid4()
-        simulated_session = AsignacionConductorBusLocal(
-            id=uuid.uuid4(), # ID PK local
-            id_conductor=conductor_para_evento_push.id,
-            id_bus=test_bus_id_pull,
-            id_sesion_conduccion=test_session_id, # Este es el ID que va a SesionConduccion.id_sesion_conduccion_jetson
-            fecha_inicio_asignacion=datetime.utcnow() - timedelta(hours=1),
-            fecha_fin_asignacion=datetime.utcnow(),
-            estado_turno="Finalizado",
-            tiempo_conduccion_acumulado_seg=3600,
-            tipo_asignacion="Test"
-        )
-        # No guardamos esta sesión en la DB local aquí, solo la usamos para el envío.
-        # En la lógica real, esta sesión ya estaría en la DB local.
-        send_session_data_to_cloud(db_session_test, simulated_session)
-
-
+            logger.error(f"Error HTTP al obtener conductor (Código: {e.response.status_code}, Respuesta: {e.response.text}): {e}")
     except Exception as e:
-        logger.error(f"Error durante la prueba de funciones PULL/PUSH: {e}", exc_info=True)
-        if db_session_test:
-            db_session_test.rollback()
-    finally:
-        if db_session_test:
-            db_session_test.close()
-    print("\n--- Prueba de cloud_sync.py Pull/Push Functions finalizada ---")
+        logger.error(f"Error inesperado al obtener conductor {conductor_uuid}: {e}", exc_info=True)
+    
+    return None
+
+# --- NUEVAS FUNCIONES PARA MULTIMEDIA ---
+def sync_multimedia_files(db: Session, file_upload_function, batch_size: int = 5) -> Dict[str, int]:
+    """
+    Sincroniza archivos multimedia pendientes con el cloud storage.
+    
+    Args:
+        db: Sesión de base de datos
+        file_upload_function: Función que maneja el upload (ej. AWS S3)
+        batch_size: Número de eventos a procesar por lote
+    
+    Returns:
+        Dict con estadísticas de sincronización
+    """
+    logger.info("Iniciando sincronización de archivos multimedia...")
+    
+    stats = {'processed': 0, 'uploaded': 0, 'failed': 0, 'skipped': 0}
+    
+    # Obtener eventos con archivos pendientes
+    events_with_files = get_events_with_unsynced_files(db, limit=batch_size)
+    
+    if not events_with_files:
+        logger.info("No hay archivos multimedia pendientes para sincronizar.")
+        return stats
+    
+    for evento in events_with_files:
+        stats['processed'] += 1
+        
+        try:
+            upload_success = file_upload_function(evento)
+            
+            if upload_success:
+                mark_event_files_as_synced(db, evento.id)
+                stats['uploaded'] += 1
+                logger.info(f"Archivos del evento {evento.id} sincronizados exitosamente")
+            else:
+                stats['failed'] += 1
+                logger.warning(f"Fallo al sincronizar archivos del evento {evento.id}")
+                
+        except Exception as e:
+            stats['failed'] += 1
+            logger.error(f"Error sincronizando archivos del evento {evento.id}: {e}")
+    
+    logger.info(f"Sincronización multimedia completada: {stats}")
+    return stats
+
+# --- Ejemplo de uso actualizado ---
+if __name__ == '__main__':
+    print("--- Probando cloud_sync.py actualizado ---")
+    print("Este script probará las nuevas funciones de sincronización multimedia")
+    print("y el flujo actualizado de obtención de conductores por UUID.")
+    
+    # Test básico de obtención de conductor por UUID
+    test_conductor_uuid = uuid.UUID("22222222-2222-2222-2222-222222222222")
+    conductor_data = pull_conductor_by_id(test_conductor_uuid)
+    
+    if conductor_data:
+        print(f"✅ Conductor obtenido: {conductor_data.get('nombre_completo', 'N/A')}")
+    else:
+        print("❌ No se pudo obtener conductor desde cloud")
+    
+    print("\n--- Para probar sincronización multimedia, necesitas:")
+    print("1. Implementar file_upload_function (AWS S3, etc.)")
+    print("2. Tener eventos con archivos multimedia en BD local")
+    print("3. Ejecutar sync_multimedia_files(db, upload_function)")

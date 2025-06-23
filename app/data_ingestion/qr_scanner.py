@@ -1,19 +1,21 @@
 import cv2
+import uuid
 from pyzbar.pyzbar import decode
 import numpy as np
 import logging
-from typing import Optional # <<<<<<<<<<<<<<<< ¡AÑADIDA ESTA IMPORTACIÓN!
+from typing import Optional
 
 # Configuración básica del logger para este módulo
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO) # Puedes ajustar el nivel (INFO, DEBUG, etc.)
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
-def scan_qr_code(frame: np.ndarray) -> Optional[str]: # <<<<<<<<<<<<<<<< ¡CAMBIADA ESTA LÍNEA!
+def scan_qr_code(frame: np.ndarray) -> Optional[str]:
     """
     Escanea un fotograma (imagen) en busca de códigos QR y devuelve el dato decodificado
     del primer QR encontrado.
@@ -22,7 +24,7 @@ def scan_qr_code(frame: np.ndarray) -> Optional[str]: # <<<<<<<<<<<<<<<< ¡CAMBI
         frame (np.ndarray): El fotograma de imagen de la cámara (array NumPy).
 
     Returns:
-        str | None: El dato decodificado del código QR como string, o None si no se encuentra.
+        Optional[str]: El dato decodificado del código QR como string, o None si no se encuentra.
     """
     if frame is None:
         logger.warning("scan_qr_code: El fotograma de entrada es None. No se puede escanear.")
@@ -37,8 +39,8 @@ def scan_qr_code(frame: np.ndarray) -> Optional[str]: # <<<<<<<<<<<<<<<< ¡CAMBI
     if decoded_objects:
         # Se encontró al menos un código QR
         for obj in decoded_objects:
-            qr_data = obj.data.decode('utf-8') # Decodifica los bytes a string UTF-8
-            qr_type = obj.type # Tipo de código (ej. 'QRCODE')
+            qr_data = obj.data.decode('utf-8')  # Decodifica los bytes a string UTF-8
+            qr_type = obj.type  # Tipo de código (ej. 'QRCODE')
             
             logger.info(f"QR detectado: Tipo={qr_type}, Datos={qr_data}")
             
@@ -49,40 +51,55 @@ def scan_qr_code(frame: np.ndarray) -> Optional[str]: # <<<<<<<<<<<<<<<< ¡CAMBI
 
 def process_qr_data(qr_data: str) -> str:
     """
-    Procesa el dato decodificado del QR para extraer el ID del conductor.
-    Asume que el QR contendrá directamente el ID de cédula del conductor,
-    o algún formato que pueda ser parseado para obtenerlo.
+    Procesa el dato decodificado del QR para extraer y validar el UUID del conductor.
+    El QR debe contener un UUID válido que identifica al conductor.
 
     Args:
         qr_data (str): El string decodificado del código QR.
 
     Returns:
-        str: El ID de cédula del conductor.
+        str: El UUID del conductor como string válido.
+        
+    Raises:
+        ValueError: Si el QR no contiene un UUID válido.
     """
-    conductor_id_cedula = qr_data
-    logger.info(f"process_qr_data: Cédula extraída del QR: {conductor_id_cedula}")
-    return conductor_id_cedula
+    try:
+        # Limpiar espacios en blanco y caracteres no deseados
+        qr_data_clean = qr_data.strip()
+        
+        # Validar que es un UUID válido
+        conductor_uuid = uuid.UUID(qr_data_clean)
+        
+        # Convertir de vuelta a string para consistencia
+        conductor_uuid_str = str(conductor_uuid)
+        
+        logger.info(f"process_qr_data: UUID válido del conductor: {conductor_uuid_str}")
+        return conductor_uuid_str
+        
+    except ValueError as e:
+        error_msg = f"QR inválido: '{qr_data}' no es un UUID válido. Error: {e}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+    except Exception as e:
+        error_msg = f"Error inesperado procesando QR '{qr_data}': {e}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
-# Ejemplo de uso (solo para pruebas, esto no se ejecutará en la Jetson app principal)
-if __name__ == '__main__':
-    # Este bloque solo se ejecuta si corres qr_scanner.py directamente
-    # Para probarlo, necesitarías una imagen con un QR o configurar una cámara virtual.
-    # Ejemplo con una imagen de prueba:
-    # try:
-    #     test_image_path = "path/to/your/test_qr_image.png" # Asegúrate de tener una imagen con un QR
-    #     test_frame = cv2.imread(test_image_path)
-    #     if test_frame is None:
-    #         logger.error(f"Error: No se pudo cargar la imagen de prueba en '{test_image_path}'.")
-    #     else:
-    #         print("Escaneando QR en la imagen de prueba...")
-    #         decoded_qr = scan_qr_code(test_frame)
-    #         if decoded_qr:
-    #             print(f"QR decodificado: {decoded_qr}")
-    #             conductor_cedula = process_qr_data(decoded_qr)
-    #             print(f"Cédula del conductor: {conductor_cedula}")
-    #         else:
-    #             print("No se detectó ningún QR en la imagen de prueba.")
-    # except ImportError:
-    #     logger.error("Error: Asegúrate de tener 'opencv-python' y 'pyzbar' instalados.")
-    #     logger.error("Usa: pip install opencv-python pyzbar")
-    pass
+def validate_conductor_qr(qr_data: str) -> tuple[bool, str, Optional[str]]:
+    """
+    Valida si un código QR contiene un UUID de conductor válido.
+    
+    Args:
+        qr_data (str): Datos del código QR escaneado.
+    
+    Returns:
+        tuple[bool, str, Optional[str]]: (es_válido, mensaje, uuid_conductor)
+    """
+    try:
+        conductor_uuid_str = process_qr_data(qr_data)
+        return True, f"QR válido: Conductor {conductor_uuid_str[:8]}...", conductor_uuid_str
+        
+    except ValueError as e:
+        return False, str(e), None
+    except Exception as e:
+        return False, f"Error validando QR: {e}", None
