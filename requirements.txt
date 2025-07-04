@@ -3,10 +3,6 @@
 
 # === DEPENDENCIAS PRINCIPALES ===
 
-# Computer Vision y Procesamiento de Imágenes
-opencv-python==4.5.3.56        # Versión optimizada para Jetson Nano
-numpy==1.19.4                   # Compatible con OpenCV en Jetson
-
 # Escaneo de Códigos QR
 pyzbar==0.1.9                   # Decodificación de códigos QR/barras
 
@@ -26,12 +22,12 @@ python-dotenv==1.0.0           # Manejo de variables de entorno (.env)
 
 
 # === UTILIDADES DE SISTEMA ===
-Pillow==8.4.0                  # Procesamiento de imágenes adicional
-pyserial==3.5                  # Comunicación serial (si usas sensores adicionales)
+#Pillow==8.4.0                  # Procesamiento de imágenes adicional
+#pyserial==3.5                  # Comunicación serial (si usas sensores adicionales)
 
 # === DEPENDENCIAS DE DESARROLLO ===
-setuptools==59.6.0            # Herramientas de instalación
-wheel==0.37.1                 # Construcción de paquetes
+#setuptools==59.6.0            # Herramientas de instalación
+#wheel==0.37.1                 # Construcción de paquetes
 
 # === LOGGING Y DEBUGGING ===
 # Las librerías de logging están incluidas en Python estándar
