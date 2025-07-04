@@ -1,0 +1,51 @@
+# Requirements para Jetson Nano - Backend Edge Computing
+# Sistema de Monitoreo de Conductores
+
+# === DEPENDENCIAS PRINCIPALES ===
+
+# Computer Vision y Procesamiento de Imágenes
+opencv-python==4.5.3.56        # Versión optimizada para Jetson Nano
+numpy==1.19.4                   # Compatible con OpenCV en Jetson
+
+# Escaneo de Códigos QR
+pyzbar==0.1.9                   # Decodificación de códigos QR/barras
+
+# Base de Datos Local (SQLite)
+SQLAlchemy==1.4.48              # ORM para base de datos SQLite local
+sqlalchemy-utils==0.38.3       # Utilidades adicionales para SQLAlchemy
+
+# Comunicación HTTP con el Backend Cloud
+requests==2.31.0               # Cliente HTTP para sincronización con la nube
+urllib3==1.26.18              # Dependencia de requests
+
+# Monitoreo del Sistema
+psutil==5.9.0                  # Métricas de CPU, RAM, disco, temperatura
+
+# Configuración y Variables de Entorno
+python-dotenv==1.0.0           # Manejo de variables de entorno (.env)
+
+
+# === UTILIDADES DE SISTEMA ===
+Pillow==8.4.0                  # Procesamiento de imágenes adicional
+pyserial==3.5                  # Comunicación serial (si usas sensores adicionales)
+
+# === DEPENDENCIAS DE DESARROLLO ===
+setuptools==59.6.0            # Herramientas de instalación
+wheel==0.37.1                 # Construcción de paquetes
+
+# === LOGGING Y DEBUGGING ===
+# Las librerías de logging están incluidas en Python estándar
+
+# === NOTAS DE INSTALACIÓN ===
+# 
+# Para instalar en Jetson Nano:
+# 1. Crear entorno virtual: python3.8 -m venv jetson_env
+# 2. Activar entorno: source jetson_env/bin/activate
+# 3. Actualizar pip: pip install --upgrade pip
+# 4. Instalar dependencias: pip install -r requirements_jetson.txt
+#
+# Si hay problemas con OpenCV, instalar desde fuentes pre-compiladas:
+# pip install opencv-python==4.5.3.56 --find-links https://download.pytorch.org/whl/torch_stable.html
+#
+# Para verificar la instalación:
+# python -c "import cv2, pyzbar, sqlalchemy, requests, psutil; print('✅ Todas las dependencias instaladas correctamente')"
