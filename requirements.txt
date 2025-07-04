@@ -1,47 +1,95 @@
-# Requirements para Jetson Nano - Backend Edge Computing
-# Sistema de Monitoreo de Conductores
 
-# === DEPENDENCIAS PRINCIPALES ===
-
-# Escaneo de Códigos QR
-pyzbar==0.1.9                   # Decodificación de códigos QR/barras
-
-# Base de Datos Local (SQLite)
-SQLAlchemy==1.4.48              # ORM para base de datos SQLite local
-sqlalchemy-utils==0.38.3       # Utilidades adicionales para SQLAlchemy
-
-# Comunicación HTTP con el Backend Cloud
-requests==2.31.0               # Cliente HTTP para sincronización con la nube
-urllib3==1.26.18              # Dependencia de requests
-
-# Monitoreo del Sistema
-psutil==5.9.0                  # Métricas de CPU, RAM, disco, temperatura
-
-# Configuración y Variables de Entorno
-python-dotenv==1.0.0           # Manejo de variables de entorno (.env)
-
-
-# === UTILIDADES DE SISTEMA ===
-#Pillow==8.4.0                  # Procesamiento de imágenes adicional
-#pyserial==3.5                  # Comunicación serial (si usas sensores adicionales)
-
-# === DEPENDENCIAS DE DESARROLLO ===
-#setuptools==59.6.0            # Herramientas de instalación
-#wheel==0.37.1                 # Construcción de paquetes
-
-# === LOGGING Y DEBUGGING ===
-# Las librerías de logging están incluidas en Python estándar
-
-# === NOTAS DE INSTALACIÓN ===
-# 
-# Para instalar en Jetson Nano:
-# 1. Crear entorno virtual: python3.8 -m venv jetson_env
-# 2. Activar entorno: source jetson_env/bin/activate
-# 3. Actualizar pip: pip install --upgrade pip
-# 4. Instalar dependencias: pip install -r requirements_jetson.txt
-#
-# Si hay problemas con OpenCV, instalar desde fuentes pre-compiladas:
-# pip install opencv-python==4.5.3.56 --find-links https://download.pytorch.org/whl/torch_stable.html
-#
-# Para verificar la instalación:
-# python -c "import cv2, pyzbar, sqlalchemy, requests, psutil; print('✅ Todas las dependencias instaladas correctamente')"
+apt-clone==0.2.1
+apturl==0.5.2
+asn1crypto==0.24.0
+beautifulsoup4==4.6.0
+blinker==1.4
+Brlapi==0.6.6
+certifi==2018.1.18
+chardet==3.0.4
+click==6.7
+colorama==0.3.7
+cryptography==2.1.4
+cupshelpers==1.0
+cycler==0.10.0
+decorator==4.1.2
+defer==1.0.6
+distro-info===0.18ubuntu0.18.04.1
+feedparser==5.2.1
+greenlet==3.1.1
+html5lib==0.999999999
+httplib2==0.9.2
+idna==2.6
+Jetson.GPIO==2.0.17
+keyring==10.6.0
+keyrings.alt==3.0
+language-selector==0.1
+launchpadlib==1.10.6
+lazr.restfulclient==0.13.5
+lazr.uri==1.0.3
+louis==3.5.0
+lxml==4.2.1
+macaroonbakery==1.1.3
+Mako==1.0.7
+MarkupSafe==1.0
+matplotlib==2.1.1
+numpy==1.24.4
+oauth==1.0.1
+oauthlib==2.0.6
+olefile==0.45.1
+onboard==1.4.1
+opencv-python-headless==4.11.0.86
+PAM==0.4.2
+pandas==0.22.0
+Pillow==5.1.0
+pkg_resources==0.0.0
+psutil==5.8.0
+pycairo==1.16.2
+pycrypto==2.6.1
+pycups==1.9.73
+PyGObject==3.26.1
+PyICU==1.9.8
+PyJWT==1.5.3
+pymacaroons==0.13.0
+PyNaCl==1.1.2
+pyparsing==2.2.0
+pyRFC3339==1.0
+python-apt==1.6.6
+python-dateutil==2.6.1
+python-debian==0.1.32
+pytz==2018.3
+pyxattr==0.6.0
+pyxdg==0.25
+PyYAML==3.12
+pyzbar==0.1.9
+requests==2.18.4
+requests-unixsocket==0.1.5
+scipy==0.19.1
+SecretStorage==2.3.1
+simplejson==3.13.2
+six==1.11.0
+SQLAlchemy==1.4.48
+ssh-import-id==5.7
+system-service==0.3
+systemd-python==234
+ubuntu-drivers-common==0.0.0
+ubuntu-pro-client==8001
+unity-scope-calculator==0.1
+unity-scope-chromiumbookmarks==0.1
+unity-scope-colourlovers==0.1
+unity-scope-devhelp==0.1
+unity-scope-firefoxbookmarks==0.1
+unity-scope-manpages==0.1
+unity-scope-openclipart==0.1
+unity-scope-texdoc==0.1
+unity-scope-tomboy==0.1
+unity-scope-virtualbox==0.1
+unity-scope-yelp==0.1
+unity-scope-zotero==0.1
+urllib3==1.22
+urwid==2.0.1
+wadllib==1.3.2
+webencodings==0.5
+xkit==0.0.0
+youtube_dl==2018.3.14
+zope.interface==4.3.2
