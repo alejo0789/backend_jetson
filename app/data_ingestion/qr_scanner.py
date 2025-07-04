@@ -3,7 +3,7 @@ import uuid
 from pyzbar.pyzbar import decode
 import numpy as np
 import logging
-from typing import Optional
+from typing import Optional, Tuple  # ← Añadir Tuple aquí
 
 # Configuración básica del logger para este módulo
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ def process_qr_data(qr_data: str) -> str:
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-def validate_conductor_qr(qr_data: str) -> tuple[bool, str, Optional[str]]:
+def validate_conductor_qr(qr_data: str) -> Tuple[bool, str, Optional[str]]:  # ← Cambiar tuple por Tuple
     """
     Valida si un código QR contiene un UUID de conductor válido.
     
@@ -93,7 +93,7 @@ def validate_conductor_qr(qr_data: str) -> tuple[bool, str, Optional[str]]:
         qr_data (str): Datos del código QR escaneado.
     
     Returns:
-        tuple[bool, str, Optional[str]]: (es_válido, mensaje, uuid_conductor)
+        Tuple[bool, str, Optional[str]]: (es_válido, mensaje, uuid_conductor)
     """
     try:
         conductor_uuid_str = process_qr_data(qr_data)
